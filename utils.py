@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.signal import convolve2d
 
-def FAST(img, N=9, threshold=0.15):
+def FAST(img, N=9, threshold=0.15, nms_window=2):
     kernel = np.array([[1,2,1],
                        [2,4,2],
                        [1,2,1]])/16      # 3x3 Gaussian Window
@@ -11,6 +11,8 @@ def FAST(img, N=9, threshold=0.15):
     cross_idx = np.array([[3,0,-3,0], [0,3,0,-3]])
     circle_idx = np.array([[3,3,2,1,0,-1,-2,-3,-3,-3,-2,-1,0,1,2,3],
 	                       [0,1,2,3,3,3,2,1,0,-1,-2,-3,-3,-3,-2,-1]])
+
+    corner_img = np.zeros(img.shape)
     keypoints = []
     for y in range(3, img.shape[0]-3):
         for x in range(3, img.shape[1]-3):
@@ -19,15 +21,32 @@ def FAST(img, N=9, threshold=0.15):
             # fast checking cross idx only
             if np.count_nonzero(Ip+t < img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3 or np.count_nonzero(Ip-t > img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3:
                 # detailed check -> full circle
-                if np.count_nonzero(Ip+t < img[y+circle_idx[0,:], x+circle_idx[1,:]]) >= N or np.count_nonzero(Ip-t > img[y+circle_idx[0,:], x+circle_idx[1,:]]) >= N:
+                bright_count = np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] >= Ip+t)
+                dark_count = np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] <= Ip-t)
+                if bright_count >= N or dark_count >= N:
                     # Keypoint [corner]
                     keypoints.append([x,y])
+                    corner_img[y,x] = np.sum(np.abs(Ip - img[y+circle_idx[0,:], x+circle_idx[1,:]]))
+            
+    # keypoints = np.array(keypoints)
+    # NMS - Non Maximal Suppression
+    fewer_kps = []
+    for [x, y] in keypoints:
+        window = corner_img[y-nms_window:y+nms_window, x-nms_window:x+nms_window]
+        # v_max = window.max()
+        loc_y_x = np.unravel_index(window.argmax(), window.shape)
+        x_new = x + loc_y_x[1] - nms_window
+        y_new = y + loc_y_x[0] - nms_window
+        new_kp = [x_new, y_new]
+        if new_kp not in fewer_kps:
+            fewer_kps.append(new_kp)
 
-    return np.array(keypoints)
+    return np.array(fewer_kps)
 
 def corner_orientations(img, corners, mask):
     mrows, mcols = mask.shape
     
+    # mask shape must be odd to have one centre point which is the corner
     mrows2 = int((mrows - 1) / 2)
     mcols2 = int((mcols - 1) / 2)
     
@@ -93,7 +112,9 @@ if __name__ == "__main__":
     
     print('corner orientations')
     from skimage.morphology import octagon
+    t3 = time()
     orientations = corner_orientations(gray, keypoints, octagon(3,2))
+    print('orientations time: ', time()-t3)
     print(np.rad2deg(orientations))
 
     plt.figure()
