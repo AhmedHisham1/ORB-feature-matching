@@ -21,18 +21,15 @@ def FAST(img, N=9, threshold=0.15, nms_window=2):
             # fast checking cross idx only
             if np.count_nonzero(Ip+t < img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3 or np.count_nonzero(Ip-t > img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3:
                 # detailed check -> full circle
-                bright_count = np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] >= Ip+t)
-                dark_count = np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] <= Ip-t)
-                if bright_count >= N or dark_count >= N:
+                if np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] >= Ip+t) >= N or np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] <= Ip-t) >= N:
                     # Keypoint [corner]
                     keypoints.append([x,y])
                     corner_img[y,x] = np.sum(np.abs(Ip - img[y+circle_idx[0,:], x+circle_idx[1,:]]))
             
-    # keypoints = np.array(keypoints)
     # NMS - Non Maximal Suppression
     fewer_kps = []
     for [x, y] in keypoints:
-        window = corner_img[y-nms_window:y+nms_window, x-nms_window:x+nms_window]
+        window = corner_img[y-nms_window:y+nms_window+1, x-nms_window:x+nms_window+1]
         # v_max = window.max()
         loc_y_x = np.unravel_index(window.argmax(), window.shape)
         x_new = x + loc_y_x[1] - nms_window
@@ -69,13 +66,20 @@ def corner_orientations(img, corners, mask):
     return np.array(orientations)
 
 
+def BRIEF():
+    '''
+    BRIEF [Binary Robust Independent Elementary Features] keypoint/corner descriptor
+    '''
+    pass
+
+
 
 if __name__ == "__main__":
     import cv2
     import matplotlib.pyplot as plt
     from time import time
 
-    img = cv2.imread('images/waffle.jpg')
+    img = cv2.imread('images/chess.jpg')
     original_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
