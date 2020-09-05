@@ -40,26 +40,26 @@ def FAST(img, N=9, threshold=0.15, nms_window=2):
 
     return np.array(fewer_kps)
 
-def corner_orientations(img, corners, mask):
-    mrows, mcols = mask.shape
+def corner_orientations(img, corners, r_size=3):
+    # r_size must be odd to have one centre point which is the corner
+    mrows2 = int((r_size - 1) / 2)
+    mcols2 = int((r_size - 1) / 2)
     
-    # mask shape must be odd to have one centre point which is the corner
-    mrows2 = int((mrows - 1) / 2)
-    mcols2 = int((mcols - 1) / 2)
-    
+    # Padding to avoid errors @ corners near image edges. 
+    # Padding value=0 to not affect the orientation calculations
     img = np.pad(img, (mrows2, mcols2), mode='constant', constant_values=0)
 
+    # Calculating orientation by the intensity centroid method
     orientations = []
     for corner in corners:
         c0, r0 = corner
         m01, m10 = 0, 0
-        for r in range(mrows):
+        for r in range(r_size):
             m01_temp = 0
-            for c in range(mcols):
-                if mask[r,c]:
-                    I = img[r0+r, c0+c]
-                    m10 = m10 + I*(c-mcols2)
-                    m01_temp = m01_temp + I
+            for c in range(r_size):
+                I = img[r0+r, c0+c]
+                m10 = m10 + I*(c-mcols2)
+                m01_temp = m01_temp + I
             m01 = m01 + m01_temp*(r-mrows2)
         orientations.append(np.arctan2(m01, m10))
 
