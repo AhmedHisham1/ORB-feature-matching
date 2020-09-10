@@ -42,7 +42,7 @@ def FAST(img, N=9, threshold=0.15, nms_window=2):
 
     return np.array(fewer_kps)
 
-def corner_orientations(img, corners, r_size=3):
+def corner_orientations(img, corners, r_size=49):
     # r_size must be odd to have one centre point which is the corner
     mrows2 = int((r_size - 1) / 2)
     mcols2 = int((r_size - 1) / 2)
@@ -68,7 +68,7 @@ def corner_orientations(img, corners, r_size=3):
     return np.array(orientations)
 
 
-def BRIEF(img, keypoints, n=256, patch_size=31, sigma=1, sample_seed=1):
+def BRIEF(img, keypoints, orientations=None, n=256, patch_size=48, sigma=1, mode='uniform', sample_seed=42, use_orientations=False):
     '''
     BRIEF [Binary Robust Independent Elementary Features] keypoint/corner descriptor
     '''
@@ -79,12 +79,21 @@ def BRIEF(img, keypoints, n=256, patch_size=31, sigma=1, sample_seed=1):
                        [1,2,1]])/16      # 3x3 Gaussian Window
     
     img = convolve2d(img, kernel, mode='same')
-    samples = (patch_size / 5.0) * random.randn(n*8)
-    samples = np.array(samples, dtype=np.int32)
-    samples = samples[(samples < (patch_size // 2)) & (samples > - (patch_size - 2) // 2)]
 
-    pos1 = samples[:n * 2].reshape(n, 2)
-    pos2 = samples[n * 2:n * 4].reshape(n, 2)
+    # TODO: make brief implementation rotation invarient
+    # if use_orientations and orientations is not None:
+    #     R = 
+
+    if mode == 'normal':
+        samples = (patch_size / 5.0) * random.randn(n*8)
+        samples = np.array(samples, dtype=np.int32)
+        samples = samples[(samples < (patch_size // 2)) & (samples > - (patch_size - 2) // 2)]
+        pos1 = samples[:n * 2].reshape(n, 2)
+        pos2 = samples[n * 2:n * 4].reshape(n, 2)
+    elif mode == 'uniform':
+        samples = random.randint(-(patch_size - 2) // 2 +1, (patch_size // 2), (n * 2, 2))
+        samples = np.array(samples, dtype=np.int32)
+        pos1, pos2 = np.split(samples, 2)
 
     rows = img.shape[0]
     cols = img.shape[1]
@@ -94,9 +103,9 @@ def BRIEF(img, keypoints, n=256, patch_size=31, sigma=1, sample_seed=1):
             & ((patch_size//2 - 1) < keypoints[:, 1])
             & (keypoints[:, 1] < (cols - patch_size//2 + 1)))
 
-    keypoints = np.array(keypoints[mask, :], dtype=np.intp, order='C', copy=False)
+    keypoints = np.array(keypoints[mask, :], dtype=np.intp, copy=False)
 
-    descriptors = np.zeros((keypoints.shape[0], n), dtype=bool, order='C')
+    descriptors = np.zeros((keypoints.shape[0], n), dtype=bool)
 
     for p in range(pos1.shape[0]):
             pr0 = pos1[p, 0]
@@ -111,14 +120,23 @@ def BRIEF(img, keypoints, n=256, patch_size=31, sigma=1, sample_seed=1):
     return descriptors
 
 
-def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True, max_ratio=1):
-    distances = cdist(descriptors1, descriptors2, metric='euclidean')   # distances.shape: [len(d1), len(d2)]
-    indices1 = np.arange(descriptors1.shape[0])     # [0, 1, 2, 3, 4, 5, 6, 7, ...]
-    indices2 = np.argmin(distances, axis=1)         # [12, 465, 23, 111, 123, 45, 67, 2, 265, ....]
-
+def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True):
+    distances = cdist(descriptors1, descriptors2, metric='hamming')   # distances.shape: [len(d1), len(d2)]
+    
+    indices1 = np.arange(descriptors1.shape[0])     # [0, 1, 2, 3, 4, 5, 6, 7, ..., len(d1)] "indices of d1"
+    indices2 = np.argmin(distances, axis=1)         # [12, 465, 23, 111, 123, 45, 67, 2, 265, ..., len(d1)] "list of the indices of d2 points that are closest to d1 points"
+                                                    # Each d1 point has a d2 point that is the most close to it.
     if cross_check:
-        matches1 = np.argmin(distances, axis=0)     # sorted indices of d1 distances
-        mask = indices1 == matches1[indices2]       # 
+        '''
+        Cross check idea:
+        what d1 matches with in d2 [indices2], should be equal to 
+        what that point in d2 matches with in d1 [matches1]
+        '''
+        matches1 = np.argmin(distances, axis=0)     # [15, 37, 283, ..., len(d2)] "list of d1 points closest to d2 points"
+                                                    # Each d2 point has a d1 point that is closest to it.
+        # indices2 is the forward matches [d1 -> d2], while matches1 is the backward matches [d2 -> d1].
+        mask = indices1 == matches1[indices2]       # len(mask) = len(d1)
+        # we are basically asking does this point in d1 matches with a point in d2 that is also matching to the same point in d1 ?
         indices1 = indices1[mask]
         indices2 = indices2[mask]
     
@@ -126,21 +144,13 @@ def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True, max
         mask = distances[indices1, indices2] < max_distance
         indices1 = indices1[mask]
         indices2 = indices2[mask]
-
-    if max_ratio < 1.0:
-        best_distances = distances[indices1, indices2]
-        distances[indices1, indices2] = np.inf
-        second_best_indices2 = np.argmin(distances[indices1], axis=1)
-        second_best_distances = distances[indices1, second_best_indices2]
-        second_best_distances[second_best_distances == 0] = np.finfo(np.double).eps
-        ratio = best_distances / second_best_distances
-        mask = ratio < max_ratio
-        indices1 = indices1[mask]
-        indices2 = indices2[mask]
     
-    matches = np.column_stack((indices1, indices2))
-    return matches
+    # sort matches using distances
+    dist = distances[indices1, indices2]
+    sorted_indices = dist.argsort()
 
+    matches = np.column_stack((indices1[sorted_indices], indices2[sorted_indices]))
+    return matches
 
 
 if __name__ == "__main__":
