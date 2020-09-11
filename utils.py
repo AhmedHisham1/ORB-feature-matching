@@ -19,33 +19,42 @@ def FAST(img, N=9, threshold=0.15, nms_window=2):
     for y in range(3, img.shape[0]-3):
         for x in range(3, img.shape[1]-3):
             Ip = img[y,x]
-            t = threshold*Ip
+            t = threshold*Ip if threshold < 1 else threshold
             # fast checking cross idx only
             if np.count_nonzero(Ip+t < img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3 or np.count_nonzero(Ip-t > img[y+cross_idx[0,:], x+cross_idx[1,:]]) >= 3:
                 # detailed check -> full circle
                 if np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] >= Ip+t) >= N or np.count_nonzero(img[y+circle_idx[0,:], x+circle_idx[1,:]] <= Ip-t) >= N:
                     # Keypoint [corner]
-                    keypoints.append([x,y])
+                    keypoints.append([x,y])     # Note: keypoint = [col, row]
                     corner_img[y,x] = np.sum(np.abs(Ip - img[y+circle_idx[0,:], x+circle_idx[1,:]]))
             
     # NMS - Non Maximal Suppression
-    fewer_kps = []
-    for [x, y] in keypoints:
-        window = corner_img[y-nms_window:y+nms_window+1, x-nms_window:x+nms_window+1]
-        # v_max = window.max()
-        loc_y_x = np.unravel_index(window.argmax(), window.shape)
-        x_new = x + loc_y_x[1] - nms_window
-        y_new = y + loc_y_x[0] - nms_window
-        new_kp = [x_new, y_new]
-        if new_kp not in fewer_kps:
-            fewer_kps.append(new_kp)
+    if nms_window != 0:
+        fewer_kps = []
+        for [x, y] in keypoints:
+            window = corner_img[y-nms_window:y+nms_window+1, x-nms_window:x+nms_window+1]
+            # v_max = window.max()
+            loc_y_x = np.unravel_index(window.argmax(), window.shape)
+            x_new = x + loc_y_x[1] - nms_window
+            y_new = y + loc_y_x[0] - nms_window
+            new_kp = [x_new, y_new]
+            if new_kp not in fewer_kps:
+                fewer_kps.append(new_kp)
+    else:
+        fewer_kps = keypoints
 
     return np.array(fewer_kps)
 
-def corner_orientations(img, corners, r_size=49):
-    # r_size must be odd to have one centre point which is the corner
-    mrows2 = int((r_size - 1) / 2)
-    mcols2 = int((r_size - 1) / 2)
+def corner_orientations(img, corners):
+    # mask shape must be odd to have one centre point which is the corner
+    OFAST_MASK = np.zeros((31, 31), dtype=np.int32)
+    OFAST_UMAX = [15, 15, 15, 15, 14, 14, 14, 13, 13, 12, 11, 10, 9, 8, 6, 3]
+    for i in range(-15, 16):
+        for j in range(-OFAST_UMAX[abs(i)], OFAST_UMAX[abs(i)] + 1):
+            OFAST_MASK[15 + j, 15 + i] = 1
+    mrows, mcols = OFAST_MASK.shape
+    mrows2 = int((mrows - 1) / 2)
+    mcols2 = int((mcols - 1) / 2)
     
     # Padding to avoid errors @ corners near image edges. 
     # Padding value=0 to not affect the orientation calculations
@@ -53,36 +62,39 @@ def corner_orientations(img, corners, r_size=49):
 
     # Calculating orientation by the intensity centroid method
     orientations = []
-    for corner in corners:
-        c0, r0 = corner
+    for i in range(corners.shape[0]):
+        c0, r0 = corners[i, :]
         m01, m10 = 0, 0
-        for r in range(r_size):
+        for r in range(mrows):
             m01_temp = 0
-            for c in range(r_size):
-                I = img[r0+r, c0+c]
-                m10 = m10 + I*(c-mcols2)
-                m01_temp = m01_temp + I
+            for c in range(mcols):
+                if OFAST_MASK[r,c]:
+                    I = img[r0+r, c0+c]
+                    m10 = m10 + I*(c-mcols2)
+                    m01_temp = m01_temp + I
             m01 = m01 + m01_temp*(r-mrows2)
         orientations.append(np.arctan2(m01, m10))
 
     return np.array(orientations)
 
 
-def BRIEF(img, keypoints, orientations=None, n=256, patch_size=48, sigma=1, mode='uniform', sample_seed=42, use_orientations=False):
+def BRIEF(img, keypoints, orientations=None, n=256, patch_size=48, sigma=1, mode='uniform', sample_seed=42):
     '''
     BRIEF [Binary Robust Independent Elementary Features] keypoint/corner descriptor
     '''
     random = np.random.RandomState(seed=sample_seed)
 
-    kernel = np.array([[1,2,1],
-                       [2,4,2],
-                       [1,2,1]])/16      # 3x3 Gaussian Window
+    # kernel = np.array([[1,2,1],
+    #                    [2,4,2],
+    #                    [1,2,1]])/16      # 3x3 Gaussian Window
+
+    kernel = np.array([[1, 4,  7,  4,  1],
+                       [4, 16, 26, 16, 4],
+                       [7, 26, 41, 26, 7],
+                       [4, 16, 26, 16, 4],
+                       [1, 4,  7,  4,  1]])/273      # 5x5 Gaussian Window
     
     img = convolve2d(img, kernel, mode='same')
-
-    # TODO: make brief implementation rotation invarient
-    # if use_orientations and orientations is not None:
-    #     R = 
 
     if mode == 'normal':
         samples = (patch_size / 5.0) * random.randn(n*8)
@@ -95,28 +107,66 @@ def BRIEF(img, keypoints, orientations=None, n=256, patch_size=48, sigma=1, mode
         samples = np.array(samples, dtype=np.int32)
         pos1, pos2 = np.split(samples, 2)
 
-    rows = img.shape[0]
-    cols = img.shape[1]
+    rows, cols = img.shape
 
-    mask = (((patch_size//2 - 1) < keypoints[:, 0])
-            & (keypoints[:, 0] < (rows - patch_size//2 + 1))
-            & ((patch_size//2 - 1) < keypoints[:, 1])
-            & (keypoints[:, 1] < (cols - patch_size//2 + 1)))
+    if orientations is None:
+        mask = (  ((patch_size//2 - 1) < keypoints[:, 0])
+                & (keypoints[:, 0] < (cols - patch_size//2 + 1))
+                & ((patch_size//2 - 1) < keypoints[:, 1])
+                & (keypoints[:, 1] < (rows - patch_size//2 + 1)))
 
-    keypoints = np.array(keypoints[mask, :], dtype=np.intp, copy=False)
+        keypoints = np.array(keypoints[mask, :], dtype=np.intp, copy=False)
+        descriptors = np.zeros((keypoints.shape[0], n), dtype=bool)
 
-    descriptors = np.zeros((keypoints.shape[0], n), dtype=bool)
-
-    for p in range(pos1.shape[0]):
+        for p in range(pos1.shape[0]):
             pr0 = pos1[p, 0]
             pc0 = pos1[p, 1]
             pr1 = pos2[p, 0]
             pc1 = pos2[p, 1]
             for k in range(keypoints.shape[0]):
-                kr = keypoints[k, 0]
-                kc = keypoints[k, 1]
+                kr = keypoints[k, 1]
+                kc = keypoints[k, 0]
                 if img[kr + pr0, kc + pc0] < img[kr + pr1, kc + pc1]:
                     descriptors[k, p] = True
+    else:
+        # Using orientations
+
+        # masking the keypoints with a safe distance from borders
+        # instead of the patch_size//2 distance used in case of no rotations.
+        distance = int((patch_size//2)*1.5)
+        mask = (  ((distance - 1) < keypoints[:, 0])
+                & (keypoints[:, 0] < (cols - distance + 1))
+                & ((distance - 1) < keypoints[:, 1])
+                & (keypoints[:, 1] < (rows - distance + 1)))
+
+        keypoints = np.array(keypoints[mask], dtype=np.intp, copy=False)
+        orientations = np.array(orientations[mask], copy=False)
+        descriptors = np.zeros((keypoints.shape[0], n), dtype=bool)
+
+        for i in range(descriptors.shape[0]):
+            angle = orientations[i]
+            sin_theta = np.sin(angle)
+            cos_theta = np.cos(angle)
+            
+            kr = keypoints[i, 1]
+            kc = keypoints[i, 0]
+            for p in range(pos1.shape[0]):
+                pr0 = pos1[p, 0]
+                pc0 = pos1[p, 1]
+                pr1 = pos2[p, 0]
+                pc1 = pos2[p, 1]
+                
+                # Rotation is based on the idea that:
+                # x` = x*cos(th) - y*sin(th)
+                # y` = x*sin(th) + y*cos(th)
+                # c -> x & r -> y
+                spr0 = round(sin_theta*pr0 + cos_theta*pc0)
+                spc0 = round(cos_theta*pr0 - sin_theta*pc0)
+                spr1 = round(sin_theta*pr1 + cos_theta*pc1)
+                spc1 = round(cos_theta*pr1 - sin_theta*pc1)
+
+                if img[kr + spr0, kc + spc0] < img[kr + spr1, kc + spc1]:
+                    descriptors[i, p] = True
     return descriptors
 
 
@@ -157,105 +207,75 @@ if __name__ == "__main__":
     import cv2
     import matplotlib.pyplot as plt
     from time import time
+    from skimage.feature import plot_matches
+    from skimage.transform import pyramid_gaussian
 
-    img = cv2.imread('images/chess.jpg')
-    original_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    # Trying multi-scale
+    N_LAYERS = 4
+    DOWNSCALE = 2
 
-    t1 = time()
-    keypoints = FAST(gray, N=9, threshold=0.15)
-    print('me: ', time()-t1)
-    features_img = np.copy(img)
+    img1 = cv2.imread('images/chess2.jpg')
+    original_img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+    img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
+    gray1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
+    grays1 = list(pyramid_gaussian(gray1, downscale=DOWNSCALE, max_layer=N_LAYERS, multichannel=False))
 
-    for keypoint in keypoints:
-        features_img = cv2.circle(features_img, tuple(keypoint), 3, (0,255,0), 1)
-    # features_img[keypoints] = [0,255,0]
+    img2 = cv2.imread('images/chess.jpg')
+    original_img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+    img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2RGB)
+    gray2 = cv2.cvtColor(img2, cv2.COLOR_RGB2GRAY)
+    grays2 = list(pyramid_gaussian(gray2, downscale=2, max_layer=4, multichannel=False))
 
-    # fig = plt.figure(figsize=(10,10))
-    plt.subplot(1,3,1)
-    plt.imshow(img)
-    plt.subplot(1,3,2)
-    plt.imshow(features_img)
-    
-    # using cv2
-    t2 = time()
-    fast_cv2 = cv2.FastFeatureDetector_create()
-    kp = fast_cv2.detect(img, None)
-    print('cv: ', time()-t2)
+    scales = [(i*DOWNSCALE if i>0 else 1) for i in range(N_LAYERS)]
+    features_img1 = np.copy(img1)
+    features_img2 = np.copy(img2)
 
-    img_cv = img
-    img_cv = cv2.drawKeypoints(img, kp, img_cv, color=(0,255,0))
 
-    plt.subplot(1,3,3)
-    plt.imshow(img_cv)
+    kps1 = []
+    kps2 = []
+    ds1 = []
+    ds2 = []
+    ms = []
+    for i in range(len(scales)):
+        scale_kp1 = FAST(grays1[i], N=9, threshold=0.15, nms_window=3)
+        kps1.append(scale_kp1*scales[i])
+        scale_kp2 = FAST(grays2[i], N=9, threshold=0.15, nms_window=3)
+        kps2.append(scale_kp2*scales[i])
+        for keypoint in scale_kp1:
+            features_img1 = cv2.circle(features_img1, tuple(keypoint*scales[i]), 3*scales[i], (0,255,0), 1)
+        for keypoint in scale_kp2:
+            features_img2 = cv2.circle(features_img2, tuple(keypoint*scales[i]), 3*scales[i], (0,255,0), 1)
+        plt.figure()
+        plt.subplot(1,2,1)
+        plt.imshow(grays1[i], cmap='gray')
+        plt.subplot(1,2,2)
+        plt.imshow(features_img1)
+        
+        plt.figure()
+        plt.subplot(1,2,1)
+        plt.imshow(grays2[i], cmap='gray')
+        plt.subplot(1,2,2)
+        plt.imshow(features_img2)
+        
+        d1 = BRIEF(grays1[i], scale_kp1, mode='uniform', patch_size=8, n=512)
+        ds1.append(d1)
+        d2 = BRIEF(grays2[i], scale_kp2, mode='uniform', patch_size=8, n=512)
+        ds2.append(d2)
+            
+        matches = match(d1,d2, cross_check=True)
+        ms.append(matches)
+        print('no. of matches: ', matches.shape[0])
+
+        fig = plt.figure(figsize=(20.0, 30.0))
+        ax = fig.add_subplot(1,1,1)
+        
+        plot_matches(ax, grays1[i], grays2[i], np.flip(scale_kp1, 1), np.flip(scale_kp2, 1), matches)
+        plt.show()
+        
+        
+    plt.figure(figsize=(20,10))
+    plt.subplot(1,2,1)
+    plt.imshow(features_img1)
+    plt.subplot(1,2,2)
+    plt.imshow(features_img2)
     plt.show()
-
-    print('my keypoints: ', len(keypoints), '\ncv keypoints: ', len(kp))
-    
-    print('corner orientations')
-    t3 = time()
-    orientations = corner_orientations(gray, keypoints, r_size=9)
-    print('orientations time: ', time()-t3)
-    print(np.rad2deg(orientations))
-
-    plt.figure()
-    plt.imshow(original_img)
-    for i in range(keypoints.shape[0]):
-        plt.quiver(keypoints[i, 0], keypoints[i, 1], np.cos(orientations[i]), np.sin(orientations[i]), 
-                width=0.002, headwidth=5, scale=30)
-    plt.show()
-
-    d1 = BRIEF(gray, keypoints)
-
-
-    img = cv2.imread('images/waffle.jpg')
-    original_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
-    t1 = time()
-    keypoints = FAST(gray, N=9, threshold=0.15)
-    print('me: ', time()-t1)
-    features_img = np.copy(img)
-
-    for keypoint in keypoints:
-        features_img = cv2.circle(features_img, tuple(keypoint), 3, (0,255,0), 1)
-    # features_img[keypoints] = [0,255,0]
-
-    # fig = plt.figure(figsize=(10,10))
-    plt.subplot(1,3,1)
-    plt.imshow(img)
-    plt.subplot(1,3,2)
-    plt.imshow(features_img)
-    
-    # using cv2
-    t2 = time()
-    fast_cv2 = cv2.FastFeatureDetector_create()
-    kp = fast_cv2.detect(img, None)
-    print('cv: ', time()-t2)
-
-    img_cv = img
-    img_cv = cv2.drawKeypoints(img, kp, img_cv, color=(0,255,0))
-
-    plt.subplot(1,3,3)
-    plt.imshow(img_cv)
-    plt.show()
-
-    print('my keypoints: ', len(keypoints), '\ncv keypoints: ', len(kp))
-    
-    print('corner orientations')
-    t3 = time()
-    orientations = corner_orientations(gray, keypoints, r_size=9)
-    print('orientations time: ', time()-t3)
-    print(np.rad2deg(orientations))
-
-    plt.figure()
-    plt.imshow(original_img)
-    for i in range(keypoints.shape[0]):
-        plt.quiver(keypoints[i, 0], keypoints[i, 1], np.cos(orientations[i]), np.sin(orientations[i]), 
-                width=0.002, headwidth=5, scale=30)
-    plt.show()
-
-    d2 = BRIEF(gray, keypoints)
-    match(d1, d2)
