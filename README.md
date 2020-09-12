@@ -14,6 +14,8 @@ Inside the ```utils.py``` file I have created the following functions:
 - **```match():```** Brute force matching of the BRIEF descriptors based on hamming distance, with the option to perform cross-check.
 
 
+The actual ORB implementation is in the ```ORB Notebook.ipynb``` file where I use all the functions of ```utils.py```.
+
 ## Examples
 ##### Multi-Scale Keypoints Detection
 ![keypoints](/images/out-kps.png)
