@@ -78,7 +78,7 @@ def corner_orientations(img, corners):
     return np.array(orientations)
 
 
-def BRIEF(img, keypoints, orientations=None, n=256, patch_size=48, sigma=1, mode='uniform', sample_seed=42):
+def BRIEF(img, keypoints, orientations=None, n=256, patch_size=9, sigma=1, mode='uniform', sample_seed=42):
     '''
     BRIEF [Binary Robust Independent Elementary Features] keypoint/corner descriptor
     '''
