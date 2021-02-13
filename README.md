@@ -11,7 +11,7 @@ Inside the ```utils.py``` file I have created the following functions:
 
 - **```BRIEF():```** BRIEF algorithm [***Binary Robust Independent Elementary Features***] for keypoints (corners) detection. The function can also utilize the keypoints orientations to compute the descriptors accordingly (steered-BRIEF algorithm).
 
-- **```match():```** Brute force matching of the BRIEF descriptors based on hamming distance, with the option to perform cross-check.
+- **```match():```** Brute force matching of the BRIEF descriptors based on hamming distance, with the option to perform cross-check, and to remove ambiguous matches (confusing matches) using a distance_ratio.
 
 
 The actual ORB implementation is in the ```ORB Notebook.ipynb``` file where I use all the functions of ```utils.py```.
