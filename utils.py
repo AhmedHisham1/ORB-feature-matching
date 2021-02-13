@@ -170,7 +170,7 @@ def BRIEF(img, keypoints, orientations=None, n=256, patch_size=9, sigma=1, mode=
     return descriptors
 
 
-def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True):
+def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True, distance_ratio=None):
     distances = cdist(descriptors1, descriptors2, metric='hamming')   # distances.shape: [len(d1), len(d2)]
     
     indices1 = np.arange(descriptors1.shape[0])     # [0, 1, 2, 3, 4, 5, 6, 7, ..., len(d1)] "indices of d1"
@@ -194,7 +194,24 @@ def match(descriptors1, descriptors2, max_distance=np.inf, cross_check=True):
         mask = distances[indices1, indices2] < max_distance
         indices1 = indices1[mask]
         indices2 = indices2[mask]
-    
+
+    if distance_ratio is not None:
+        '''
+        the idea of distance_ratio is to use this ratio to remove ambigous matches.
+        ambigous matches: matches where the closest match distance is similar to the second closest match distance
+                          basically, the algorithm is confused about 2 points, and is not sure enough with the closest match.
+        solution: if the ratio between the distance of the closest match and
+                  that of the second closest match is more than the defined "distance_ratio",
+                  we remove this match entirly. if not, we leave it as is.
+        '''
+        modified_dist = distances
+        fc = np.min(modified_dist[indices1,:], axis=1)
+        modified_dist[indices1, indices2] = np.inf
+        fs = np.min(modified_dist[indices1,:], axis=1)
+        mask = fc/fs <= 0.5
+        indices1 = indices1[mask]
+        indices2 = indices2[mask]
+
     # sort matches using distances
     dist = distances[indices1, indices2]
     sorted_indices = dist.argsort()
@@ -214,7 +231,7 @@ if __name__ == "__main__":
     N_LAYERS = 4
     DOWNSCALE = 2
 
-    img1 = cv2.imread('images/chess2.jpg')
+    img1 = cv2.imread('images/chess3.jpg')
     original_img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
     img1 = cv2.cvtColor(img1, cv2.COLOR_BGR2RGB)
     gray1 = cv2.cvtColor(img1, cv2.COLOR_RGB2GRAY)
@@ -266,7 +283,7 @@ if __name__ == "__main__":
         ms.append(matches)
         print('no. of matches: ', matches.shape[0])
 
-        fig = plt.figure(figsize=(20.0, 30.0))
+        fig = plt.figure(figsize=(20, 10))
         ax = fig.add_subplot(1,1,1)
         
         plot_matches(ax, grays1[i], grays2[i], np.flip(scale_kp1, 1), np.flip(scale_kp2, 1), matches)
